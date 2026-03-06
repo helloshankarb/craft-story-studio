@@ -5,8 +5,17 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// API Base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// API Base URL - uses current domain for Vercel compatibility
+const getApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) return envUrl;
+  // In production (Vercel), use the same domain
+  if (import.meta.env.PROD) return '';
+  // In development, use localhost
+  return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Types
 export interface GalleryProduct {
@@ -35,6 +44,15 @@ export interface ProductResponse {
   error?: string;
 }
 
+// Helper to build API URL - uses relative path in production
+const buildApiUrl = (endpoint: string) => {
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}${endpoint}`;
+  }
+  // In production, use relative URL (same domain)
+  return endpoint;
+};
+
 // API Functions
 export const galleryApi = {
   /**
@@ -47,7 +65,7 @@ export const galleryApi = {
       if (options?.limit) params.append('limit', options.limit.toString());
       if (options?.offset) params.append('offset', options.offset.toString());
 
-      const response = await fetch(`${API_BASE_URL}/gallery?${params.toString()}`);
+      const response = await fetch(buildApiUrl(`/api/gallery?${params.toString()}`));
       return await response.json();
     } catch (error) {
       return {
@@ -62,7 +80,7 @@ export const galleryApi = {
    */
   async getProduct(id: string): Promise<ProductResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/gallery/${id}`);
+      const response = await fetch(buildApiUrl(`/api/gallery/${id}`));
       return await response.json();
     } catch (error) {
       return {
@@ -90,7 +108,7 @@ export const galleryApi = {
       if (productData.category) formData.append('category', productData.category);
       formData.append('image', productData.image);
 
-      const response = await fetch(`${API_BASE_URL}/gallery`, {
+      const response = await fetch(buildApiUrl('/api/gallery'), {
         method: 'POST',
         body: formData
       });
@@ -125,7 +143,7 @@ export const galleryApi = {
       if (productData.category !== undefined) formData.append('category', productData.category);
       if (productData.image) formData.append('image', productData.image);
 
-      const response = await fetch(`${API_BASE_URL}/gallery/${id}`, {
+      const response = await fetch(buildApiUrl(`/api/gallery/${id}`), {
         method: 'PUT',
         body: formData
       });
@@ -144,7 +162,7 @@ export const galleryApi = {
    */
   async deleteProduct(id: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/gallery/${id}`, {
+      const response = await fetch(buildApiUrl(`/api/gallery/${id}`), {
         method: 'DELETE'
       });
       return await response.json();
@@ -161,7 +179,7 @@ export const galleryApi = {
    */
   async getCategories(): Promise<{ success: boolean; data?: string[]; error?: string }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/gallery/categories`);
+      const response = await fetch(buildApiUrl('/api/gallery/categories'));
       return await response.json();
     } catch (error) {
       return {
@@ -171,3 +189,4 @@ export const galleryApi = {
     }
   }
 };
+
