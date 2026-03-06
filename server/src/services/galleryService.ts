@@ -1,227 +1,135 @@
-import { supabaseAdmin } from '../config/supabase';
-import { StorageService } from './storageService';
-import { GalleryProduct, CreateProductInput, UpdateProductInput } from '../types/gallery';
+import { supabaseAdmin } from '../config/supabase.js';
+import { GalleryProduct, CreateProductInput, UpdateProductInput } from '../types/gallery.js';
+import { uploadImage, deleteImage } from './storageService.js';
 
-export class GalleryService {
-  /**
-   * Create a new product in the gallery
-   */
-  static async createProduct(input: CreateProductInput): Promise<GalleryProduct> {
-    // Upload image to Supabase Storage
-    const { url: imageUrl, path: imagePath } = await StorageService.uploadImage(input.image);
+const TABLE_NAME = 'gallery_products';
 
-    // Insert product into database
-    const { data, error } = await supabaseAdmin
-      .from('craft_products')
-      .insert({
-        title: input.title,
-        description: input.description || null,
-        price: input.price,
-        image_url: imageUrl,
-        image_path: imagePath,
-        category: input.category || null,
-        is_active: true
-      })
-      .select()
-      .single();
+export const getAllProducts = async (): Promise<GalleryProduct[]> => {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE_NAME)
+    .select('*')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
 
-    if (error) {
-      // Rollback: delete uploaded image if database insert fails
-      await StorageService.deleteImage(imagePath);
-      throw new Error(`Failed to create product: ${error.message}`);
-    }
-
-    return data;
+  if (error) {
+    throw new Error(`Failed to fetch products: ${error.message}`);
   }
 
-  /**
-   * Get all active products
-   */
-  static async getProducts(options?: {
-    category?: string;
-    limit?: number;
-    offset?: number;
-  }): Promise<{ products: GalleryProduct[]; count: number }> {
-    let query = supabaseAdmin
-      .from('craft_products')
-      .select('*', { count: 'exact' })
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
+  return data || [];
+};
 
-    if (options?.category) {
-      query = query.eq('category', options.category);
-    }
+export const getProductById = async (id: string): Promise<GalleryProduct | null> => {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE_NAME)
+    .select('*')
+    .eq('id', id)
+    .single();
 
-    if (options?.limit) {
-      query = query.limit(options.limit);
-    }
-
-    if (options?.offset) {
-      query = query.range(options.offset, options.offset + (options.limit || 10) - 1);
-    }
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch products: ${error.message}`);
-    }
-
-    return {
-      products: data || [],
-      count: count || 0
-    };
+  if (error) {
+    if (error.code === 'PGRST116') return null; // Not found
+    throw new Error(`Failed to fetch product: ${error.message}`);
   }
 
-  /**
-   * Get a single product by ID
-   */
-  static async getProductById(id: string): Promise<GalleryProduct | null> {
-    const { data, error } = await supabaseAdmin
-      .from('craft_products')
-      .select('*')
-      .eq('id', id)
-      .eq('is_active', true)
-      .single();
+  return data;
+};
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return null; // Product not found
-      }
-      throw new Error(`Failed to fetch product: ${error.message}`);
-    }
+export const createProduct = async (input: CreateProductInput): Promise<GalleryProduct> => {
+  let image_url = null;
+  let image_path = null;
 
-    return data;
+  // Upload image if provided
+  if (input.image) {
+    const uploadResult = await uploadImage(input.image);
+    image_url = uploadResult.url;
+    image_path = uploadResult.path;
   }
 
-  /**
-   * Update a product
-   */
-  static async updateProduct(id: string, input: UpdateProductInput): Promise<GalleryProduct> {
-    // Get existing product
-    const existingProduct = await this.getProductById(id);
-    if (!existingProduct) {
-      throw new Error('Product not found');
+  const productData = {
+    title: input.title,
+    description: input.description || null,
+    price: input.price,
+    category: input.category || null,
+    image_url,
+    image_path,
+    is_active: true
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from(TABLE_NAME)
+    .insert(productData)
+    .select()
+    .single();
+
+  if (error) {
+    // Clean up uploaded image if DB insert fails
+    if (image_path) {
+      await deleteImage(image_path);
     }
-
-    let imageUrl = existingProduct.image_url;
-    let imagePath = existingProduct.image_path;
-
-    // If new image uploaded, replace the old one
-    if (input.image) {
-      const { url, path } = await StorageService.uploadImage(input.image);
-      imageUrl = url;
-      imagePath = path;
-
-      // Delete old image
-      if (existingProduct.image_path) {
-        await StorageService.deleteImage(existingProduct.image_path);
-      }
-    }
-
-    // Update product in database
-    const updateData: Partial<GalleryProduct> = {
-      title: input.title,
-      description: input.description,
-      price: input.price,
-      image_url: imageUrl,
-      image_path: imagePath,
-      category: input.category,
-      is_active: input.is_active,
-      updated_at: new Date().toISOString()
-    };
-
-    // Remove undefined values
-    Object.keys(updateData).forEach(key => {
-      if (updateData[key as keyof GalleryProduct] === undefined) {
-        delete updateData[key as keyof GalleryProduct];
-      }
-    });
-
-    const { data, error } = await supabaseAdmin
-      .from('craft_products')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update product: ${error.message}`);
-    }
-
-    return data;
+    throw new Error(`Failed to create product: ${error.message}`);
   }
 
-  /**
-   * Delete a product (soft delete)
-   */
-  static async deleteProduct(id: string): Promise<void> {
-    // Get existing product
-    const existingProduct = await this.getProductById(id);
-    if (!existingProduct) {
-      throw new Error('Product not found');
-    }
+  return data;
+};
 
-    // Soft delete - just set is_active to false
-    const { error } = await supabaseAdmin
-      .from('craft_products')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) {
-      throw new Error(`Failed to delete product: ${error.message}`);
-    }
-
-    // Optionally delete the image from storage
-    if (existingProduct.image_path) {
-      try {
-        await StorageService.deleteImage(existingProduct.image_path);
-      } catch (err) {
-        console.error('Failed to delete image:', err);
-      }
-    }
+export const updateProduct = async (id: string, input: UpdateProductInput): Promise<GalleryProduct> => {
+  // Get existing product
+  const existing = await getProductById(id);
+  if (!existing) {
+    throw new Error('Product not found');
   }
 
-  /**
-   * Permanently delete a product and its image
-   */
-  static async permanentlyDeleteProduct(id: string): Promise<void> {
-    // Get existing product
-    const existingProduct = await this.getProductById(id);
-    if (!existingProduct) {
-      throw new Error('Product not found');
-    }
+  const updateData: Record<string, unknown> = {
+    updated_at: new Date().toISOString()
+  };
 
-    // Delete from database
-    const { error } = await supabaseAdmin
-      .from('craft_products')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      throw new Error(`Failed to delete product: ${error.message}`);
+  // Handle image update
+  if (input.image) {
+    // Delete old image if exists
+    if (existing.image_path) {
+      await deleteImage(existing.image_path);
     }
-
-    // Delete image from storage
-    if (existingProduct.image_path) {
-      await StorageService.deleteImage(existingProduct.image_path);
-    }
+    
+    // Upload new image
+    const uploadResult = await uploadImage(input.image);
+    updateData.image_url = uploadResult.url;
+    updateData.image_path = uploadResult.path;
   }
 
-  /**
-   * Get all unique categories
-   */
-  static async getCategories(): Promise<string[]> {
-    const { data, error } = await supabaseAdmin
-      .from('craft_products')
-      .select('category')
-      .eq('is_active', true)
-      .not('category', 'is', null);
+  // Update other fields
+  if (input.title !== undefined) updateData.title = input.title;
+  if (input.description !== undefined) updateData.description = input.description;
+  if (input.price !== undefined) updateData.price = input.price;
+  if (input.category !== undefined) updateData.category = input.category;
+  if (input.is_active !== undefined) updateData.is_active = input.is_active;
 
-    if (error) {
-      throw new Error(`Failed to fetch categories: ${error.message}`);
-    }
+  const { data, error } = await supabaseAdmin
+    .from(TABLE_NAME)
+    .update(updateData)
+    .eq('id', id)
+    .select()
+    .single();
 
-    const categories = new Set(data?.map(item => item.category) as string[]);
-    return Array.from(categories);
+  if (error) {
+    throw new Error(`Failed to update product: ${error.message}`);
   }
-}
+
+  return data;
+};
+
+export const deleteProduct = async (id: string): Promise<void> => {
+  // Get existing product to delete its image
+  const existing = await getProductById(id);
+  
+  if (existing?.image_path) {
+    await deleteImage(existing.image_path);
+  }
+
+  const { error } = await supabaseAdmin
+    .from(TABLE_NAME)
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`Failed to delete product: ${error.message}`);
+  }
+};

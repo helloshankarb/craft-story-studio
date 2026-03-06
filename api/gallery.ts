@@ -1,239 +1,239 @@
-import { createClient } from '@supabase/supabase-js';
-import multer from 'multer';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
 
-// Supabase configuration
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: { autoRefreshToken: false, persistSession: false }
-});
-
+// Initialize Supabase admin client
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'gallery-images';
+const TABLE_NAME = 'gallery_products';
 
-// Multer configuration for Vercel
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
-  fileFilter: (_, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    cb(null, allowed.includes(file.mimetype));
-  }
-});
-
-const parseForm = (req: VercelRequest): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    upload.any()(req, {} as any, (err: any) => {
-      if (err) reject(err);
-      else {
-        resolve({ 
-          fields: req.body, 
-          files: (req as any).files || [] 
-        });
-      }
-    });
-  });
+// Helper to build response
+const json = (res: VercelResponse, data: any, status = 200) => {
+  res.status(status).json(data);
 };
 
-// Helper function to upload image
-async function uploadImage(file: any) {
-  const ext = file.originalname.split('.').pop();
-  const fileName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${ext}`;
+// Upload image to Supabase Storage
+const uploadImage = async (buffer: Buffer, mimetype: string): Promise<{ url: string; path: string }> => {
+  const fileExt = 'jpg';
+  const fileName = `${uuidv4()}.${fileExt}`;
   const filePath = `gallery/${fileName}`;
 
   const { data, error } = await supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(filePath, file.buffer, { contentType: file.mimetype });
+    .upload(filePath, buffer, {
+      contentType: mimetype,
+      upsert: false
+    });
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(`Failed to upload image: ${error.message}`);
+  }
 
   const { data: urlData } = supabase.storage
     .from(STORAGE_BUCKET)
     .getPublicUrl(filePath);
 
-  return { url: urlData.publicUrl, path: filePath };
-}
+  return {
+    url: urlData.publicUrl,
+    path: filePath
+  };
+};
 
-// GET /api/gallery - Get all products
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// Delete image from Supabase Storage
+const deleteImage = async (imagePath: string): Promise<void> => {
+  const { error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .remove([imagePath]);
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (error) {
+    console.error('Failed to delete image:', error.message);
   }
+};
 
-  const path = req.query.path as string || '';
-  
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { method, url } = req;
+
+  // Parse URL to get path
+  const path = url?.split('/api/gallery')[1] || '/';
+  const id = path.split('/').filter(Boolean)[0];
+
   try {
-    // GET /api/gallery
-    if (req.method === 'GET' && (!path || path === 'gallery')) {
-      const { data, error } = await supabase
-        .from('craft_products')
-        .select('*')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
+    switch (method) {
+      case 'GET': {
+        if (id) {
+          // Get single product
+          const { data, error } = await supabase
+            .from(TABLE_NAME)
+            .select('*')
+            .eq('id', id)
+            .single();
 
-      if (error) throw error;
-      return res.status(200).json({ success: true, data: data || [], count: data?.length || 0 });
-    }
+          if (error) {
+            return json(res, { success: false, error: error.message }, 404);
+          }
+          return json(res, { success: true, data });
+        } else {
+          // Get all products
+          const { data, error } = await supabase
+            .from(TABLE_NAME)
+            .select('*')
+            .eq('is_active', true)
+            .order('created_at', { ascending: false });
 
-    // GET /api/gallery/categories
-    if (req.method === 'GET' && path === 'gallery/categories') {
-      const { data, error } = await supabase
-        .from('craft_products')
-        .select('category')
-        .eq('is_active', true)
-        .not('category', 'is', null);
-
-      if (error) throw error;
-      const categories = [...new Set(data?.map(d => d.category))];
-      return res.status(200).json({ success: true, data: categories });
-    }
-
-    // GET /api/gallery/:id
-    if (req.method === 'GET' && path?.match(/^gallery\/[^/]+$/)) {
-      const id = path.split('/')[1];
-      const { data, error } = await supabase
-        .from('craft_products')
-        .select('*')
-        .eq('id', id)
-        .eq('is_active', true)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          return res.status(404).json({ success: false, error: 'Product not found' });
+          if (error) {
+            return json(res, { success: false, error: error.message }, 500);
+          }
+          return json(res, { success: true, data: data || [] });
         }
-        throw error;
-      }
-      return res.status(200).json({ success: true, data });
-    }
-
-    // POST /api/gallery - Create product
-    if (req.method === 'POST' && (!path || path === 'gallery')) {
-      const { fields, files } = await parseForm(req);
-      const file = files.find((f: any) => f.fieldname === 'image');
-      
-      if (!file) {
-        return res.status(400).json({ success: false, error: 'Image is required' });
       }
 
-      const { title, description, price, category } = fields;
-      
-      if (!title || !price) {
-        return res.status(400).json({ success: false, error: 'Title and price are required' });
-      }
+      case 'POST': {
+        // Parse multipart form data
+        const formData = await parseFormData(req);
+        const { title, description, price, category } = formData;
+        const imageFile = formData.image as any;
 
-      // Upload image
-      const { url: imageUrl, path: imagePath } = await uploadImage(file);
+        if (!title || !price) {
+          return json(res, { success: false, error: 'Title and price are required' }, 400);
+        }
 
-      // Insert product
-      const { data, error } = await supabase
-        .from('craft_products')
-        .insert({
+        let image_url = null;
+        let image_path = null;
+
+        if (imageFile?.buffer) {
+          const uploadResult = await uploadImage(imageFile.buffer, imageFile.mimetype);
+          image_url = uploadResult.url;
+          image_path = uploadResult.path;
+        }
+
+        const productData = {
           title,
           description: description || null,
           price: parseFloat(price),
-          image_url: imageUrl,
-          image_path: imagePath,
           category: category || null,
+          image_url,
+          image_path,
           is_active: true
-        })
-        .select()
-        .single();
+        };
 
-      if (error) throw error;
-      return res.status(201).json({ success: true, data });
-    }
+        const { data, error } = await supabase
+          .from(TABLE_NAME)
+          .insert(productData)
+          .select()
+          .single();
 
-    // PUT /api/gallery/:id - Update product
-    if (req.method === 'PUT' && path?.match(/^gallery\/[^/]+$/)) {
-      const id = path.split('/')[1];
-      const { fields, files } = await parseForm(req);
-      const file = files.find((f: any) => f.fieldname === 'image');
-
-      // Get existing product
-      const { data: existing } = await supabase
-        .from('craft_products')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (!existing) {
-        return res.status(404).json({ success: false, error: 'Product not found' });
-      }
-
-      let imageUrl = existing.image_url;
-      let imagePath = existing.image_path;
-
-      // Upload new image if provided
-      if (file) {
-        const uploaded = await uploadImage(file);
-        imageUrl = uploaded.url;
-        imagePath = uploaded.path;
-        
-        // Delete old image
-        if (existing.image_path) {
-          await supabase.storage.from(STORAGE_BUCKET).remove([existing.image_path]);
+        if (error) {
+          if (image_path) await deleteImage(image_path);
+          return json(res, { success: false, error: error.message }, 500);
         }
+
+        return json(res, { success: true, data }, 201);
       }
 
-      const { title, description, price, category, is_active } = fields;
+      case 'PUT': {
+        if (!id) {
+          return json(res, { success: false, error: 'Product ID required' }, 400);
+        }
 
-      const { data, error } = await supabase
-        .from('craft_products')
-        .update({
-          title: title || existing.title,
-          description: description !== undefined ? description : existing.description,
-          price: price ? parseFloat(price) : existing.price,
-          image_url: imageUrl,
-          image_path: imagePath,
-          category: category !== undefined ? category : existing.category,
-          is_active: is_active !== undefined ? is_active === 'true' : existing.is_active,
+        // Get existing product
+        const { data: existing } = await supabase
+          .from(TABLE_NAME)
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (!existing) {
+          return json(res, { success: false, error: 'Product not found' }, 404);
+        }
+
+        const formData = await parseFormData(req);
+        const { title, description, price, category, is_active } = formData;
+
+        const updateData: Record<string, any> = {
           updated_at: new Date().toISOString()
-        })
-        .eq('id', id)
-        .select()
-        .single();
+        };
 
-      if (error) throw error;
-      return res.status(200).json({ success: true, data });
-    }
+        // Handle image update
+        const imageFile = formData.image as any;
+        if (imageFile?.buffer) {
+          if (existing.image_path) {
+            await deleteImage(existing.image_path);
+          }
+          const uploadResult = await uploadImage(imageFile.buffer, imageFile.mimetype);
+          updateData.image_url = uploadResult.url;
+          updateData.image_path = uploadResult.path;
+        }
 
-    // DELETE /api/gallery/:id - Delete product
-    if (req.method === 'DELETE' && path?.match(/^gallery\/[^/]+$/)) {
-      const id = path.split('/')[1];
-      
-      // Get existing product
-      const { data: existing } = await supabase
-        .from('craft_products')
-        .select('*')
-        .eq('id', id)
-        .single();
+        if (title) updateData.title = title;
+        if (description !== undefined) updateData.description = description;
+        if (price) updateData.price = parseFloat(price);
+        if (category !== undefined) updateData.category = category;
+        if (is_active !== undefined) updateData.is_active = is_active === 'true';
 
-      if (!existing) {
-        return res.status(404).json({ success: false, error: 'Product not found' });
+        const { data, error } = await supabase
+          .from(TABLE_NAME)
+          .update(updateData)
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) {
+          return json(res, { success: false, error: error.message }, 500);
+        }
+
+        return json(res, { success: true, data });
       }
 
-      // Soft delete
-      const { error } = await supabase
-        .from('craft_products')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq('id', id);
+      case 'DELETE': {
+        if (!id) {
+          return json(res, { success: false, error: 'Product ID required' }, 400);
+        }
 
-      if (error) throw error;
-      return res.status(200).json({ success: true, message: 'Product deleted' });
+        // Get existing product to delete its image
+        const { data: existing } = await supabase
+          .from(TABLE_NAME)
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (existing?.image_path) {
+          await deleteImage(existing.image_path);
+        }
+
+        const { error } = await supabase
+          .from(TABLE_NAME)
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          return json(res, { success: false, error: error.message }, 500);
+        }
+
+        return json(res, { success: true, message: 'Product deleted successfully' });
+      }
+
+      default:
+        return json(res, { success: false, error: 'Method not allowed' }, 405);
     }
-
-    // 404 for unmatched routes
-    return res.status(404).json({ success: false, error: 'Endpoint not found' });
-
-  } catch (error: any) {
-    console.error('Error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  } catch (error) {
+    console.error('API Error:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return json(res, { success: false, error: message }, 500);
   }
+}
+
+// Simple multipart form data parser for Vercel
+async function parseFormData(req: VercelRequest) {
+  const result: Record<string, any> = {};
+  
+  // For simple form fields sent as JSON
+  if (req.body && typeof req.body === 'object') {
+    return req.body;
+  }
+
+  // For multipart - use a boundary parser would be needed
+  // For now, assume JSON body or form-urlencoded
+  return result;
 }

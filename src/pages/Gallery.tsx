@@ -1,171 +1,45 @@
 import Layout from "@/components/Layout";
 import PageBanner from "@/components/PageBanner";
 import { useState, useEffect } from "react";
-import { X, Plus, Edit, Trash2, Loader2, DollarSign } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { X, Loader2 } from "lucide-react";
 import { galleryApi, GalleryProduct } from "@/lib/supabase";
 
-// Fallback images for demo when API is not connected
 const fallbackImages = [
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.29 AM.jpeg", alt: "Leather Craft Item 1", title: "Handcrafted Leather Wallet", price: 1500, description: "Genuine leather wallet with intricate stitching" },
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.31 AM.jpeg", alt: "Leather Craft Item 2", title: "Leather Belt", price: 1200, description: "Classic leather belt with brass buckle" },
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.36 AM.jpeg", alt: "Leather Craft Item 3", title: "Leather Bag", price: 3500, description: "Spacious leather bag for daily use" },
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.38 AM.jpeg", alt: "Leather Craft Item 4", title: "Leather Journal", price: 800, description: "Handbound leather journal" },
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.40 AM.jpeg", alt: "Leather Craft Item 5", title: "Phone Case", price: 500, description: "Premium leather phone case" },
-  { src: "/images/WhatsApp Image 2026-03-04 at 10.32.44 AM.jpeg", alt: "Leather Craft Item 6", title: "Key Chain", price: 300, description: "Leather key chain with metal accents" },
+  { id: 'fallback-1', src: "/images/WhatsApp Image 2026-03-04 at 10.32.29 AM.jpeg", alt: "Leather Craft Item 1", title: "Handcrafted Leather Wallet", price: 1500, description: "Genuine leather wallet with intricate stitching", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.29 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
+  { id: 'fallback-2', src: "/images/WhatsApp Image 2026-03-04 at 10.32.31 AM.jpeg", alt: "Leather Craft Item 2", title: "Leather Belt", price: 1200, description: "Classic leather belt with brass buckle", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.31 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
+  { id: 'fallback-3', src: "/images/WhatsApp Image 2026-03-04 at 10.32.36 AM.jpeg", alt: "Leather Craft Item 3", title: "Leather Bag", price: 3500, description: "Spacious leather bag for daily use", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.36 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
+  { id: 'fallback-4', src: "/images/WhatsApp Image 2026-03-04 at 10.32.38 AM.jpeg", alt: "Leather Craft Item 4", title: "Leather Journal", price: 800, description: "Handbound leather journal", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.38 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
+  { id: 'fallback-5', src: "/images/WhatsApp Image 2026-03-04 at 10.32.40 AM.jpeg", alt: "Leather Craft Item 5", title: "Phone Case", price: 500, description: "Premium leather phone case", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.40 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
+  { id: 'fallback-6', src: "/images/WhatsApp Image 2026-03-04 at 10.32.44 AM.jpeg", alt: "Leather Craft Item 6", title: "Key Chain", price: 300, description: "Leather key chain with metal accents", category: "Leather Craft", image_url: "/images/WhatsApp Image 2026-03-04 at 10.32.44 AM.jpeg", is_active: true, created_at: '', updated_at: '' },
 ];
 
 const Gallery = () => {
   const [products, setProducts] = useState<GalleryProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<GalleryProduct | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  // Form state
-  const [formData, setFormData] = useState({
-    title: "",
-    description: "",
-    price: "",
-    category: "",
-    image: null as File | null
-  });
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch products on mount
   useEffect(() => {
-    fetchProducts();
+    loadProducts();
   }, []);
 
-  const fetchProducts = async () => {
+  const loadProducts = async () => {
     setLoading(true);
-    const response = await galleryApi.getProducts();
-    if (response.success && response.data) {
-      setProducts(response.data);
+    setError(null);
+    try {
+      const data = await galleryApi.getProducts();
+      setProducts(data);
+    } catch (err) {
+      console.error('Error loading products:', err);
+      setError('Failed to load products from database');
     }
     setLoading(false);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFormData(prev => ({ ...prev, image: e.target.files![0] }));
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-
-    try {
-      if (editingProduct) {
-        // Update existing product
-        const response = await galleryApi.updateProduct(editingProduct.id, {
-          title: formData.title,
-          description: formData.description,
-          price: parseFloat(formData.price),
-          category: formData.category,
-          image: formData.image || undefined
-        });
-
-        if (response.success) {
-          fetchProducts();
-          closeModal();
-        }
-      } else {
-        // Create new product
-        if (!formData.image) {
-          alert("Please select an image");
-          setIsSubmitting(false);
-          return;
-        }
-
-        const response = await galleryApi.createProduct({
-          title: formData.title,
-          description: formData.description,
-          price: parseFloat(formData.price),
-          category: formData.category,
-          image: formData.image
-        });
-
-        if (response.success) {
-          fetchProducts();
-          closeModal();
-        }
-      }
-    } catch (error) {
-      console.error("Error submitting form:", error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleEdit = (product: GalleryProduct) => {
-    setEditingProduct(product);
-    setFormData({
-      title: product.title,
-      description: product.description || "",
-      price: product.price.toString(),
-      category: product.category || "",
-      image: null
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm("Are you sure you want to delete this product?")) {
-      const response = await galleryApi.deleteProduct(id);
-      if (response.success) {
-        fetchProducts();
-      }
-    }
-  };
-
-  const openAddModal = () => {
-    setEditingProduct(null);
-    setFormData({
-      title: "",
-      description: "",
-      price: "",
-      category: "",
-      image: null
-    });
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingProduct(null);
-    setFormData({
-      title: "",
-      description: "",
-      price: "",
-      category: "",
-      image: null
-    });
-  };
-
-  // Display products from API or fallback images
-  const displayProducts = products.length > 0 ? products : fallbackImages.map((img, index) => ({
-    id: `fallback-${index}`,
-    title: img.title,
-    description: img.description,
-    price: img.price,
-    image_url: img.src,
-    image_path: null,
-    category: "Leather Craft",
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }));
+  // Show admin products first, then fallback images
+  const displayProducts = products.length > 0 
+    ? products 
+    : fallbackImages;
 
   return (
     <Layout>
@@ -176,11 +50,16 @@ const Gallery = () => {
             <div className="flex justify-center items-center h-64">
               <Loader2 className="w-8 h-8 animate-spin" />
             </div>
+          ) : error ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">{error}</p>
+              <p className="text-sm text-muted-foreground mt-2">Make sure Supabase is configured with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY</p>
+            </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-              {displayProducts.map((product) => (
+              {displayProducts.map((product, index) => (
                 <div
-                  key={product.id}
+                  key={product.id || index}
                   className="relative group overflow-hidden rounded-lg aspect-square cursor-pointer"
                   onClick={() => setLightbox(product.image_url)}
                 >
@@ -195,7 +74,6 @@ const Gallery = () => {
                     </span>
                   </div>
                   
-                  {/* Product Info Overlay */}
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
                     <p className="text-white font-semibold text-sm truncate">{product.title}</p>
                     <p className="text-white/90 text-xs">₹{product.price}</p>
@@ -207,7 +85,6 @@ const Gallery = () => {
         </div>
       </section>
 
-      {/* Lightbox */}
       {lightbox && (
         <div
           className="fixed inset-0 z-50 bg-background/95 flex items-center justify-center p-4"
@@ -226,101 +103,6 @@ const Gallery = () => {
           />
         </div>
       )}
-
-      {/* Add/Edit Product Modal */}
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <label htmlFor="title" className="text-sm font-medium">Title *</label>
-                <Input
-                  id="title"
-                  name="title"
-                  value={formData.title}
-                  onChange={handleInputChange}
-                  placeholder="Enter product title"
-                  required
-                />
-              </div>
-              
-              <div className="grid gap-2">
-                <label htmlFor="description" className="text-sm font-medium">Description</label>
-                <Textarea
-                  id="description"
-                  name="description"
-                  value={formData.description}
-                  onChange={handleInputChange}
-                  placeholder="Enter product description"
-                  rows={3}
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <label htmlFor="price" className="text-sm font-medium">Price (₹) *</label>
-                <Input
-                  id="price"
-                  name="price"
-                  type="number"
-                  value={formData.price}
-                  onChange={handleInputChange}
-                  placeholder="Enter price"
-                  min="0"
-                  step="0.01"
-                  required
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <label htmlFor="category" className="text-sm font-medium">Category</label>
-                <Input
-                  id="category"
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  placeholder="e.g., Leather Craft, Wood Work"
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <label htmlFor="image" className="text-sm font-medium">
-                  Product Image {editingProduct ? "(leave empty to keep current)" : "*"}
-                </label>
-                <Input
-                  id="image"
-                  name="image"
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageChange}
-                  required={!editingProduct}
-                />
-                {editingProduct && (
-                  <p className="text-xs text-muted-foreground">
-                    Current image will be kept if no new image is selected
-                  </p>
-                )}
-              </div>
-            </div>
-            
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeModal}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : editingProduct ? "Update Product" : "Add Product"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </Layout>
   );
 };
